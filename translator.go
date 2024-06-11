@@ -47,7 +47,7 @@ func translate(src []byte) []byte {
 		}
 
 		// find html escaped quote character (&quot;)
-		if (!quote || quote && escapedQuote) && seq(src, i, "&quot;") {
+		if (!quote || escapedQuote) && seq(src, i, "&quot;") {
 			ch = QUOTE // replace with quote
 			i += 5     // go to last char or sequence, len("&quot;") - 1
 			escapedQuote = !escapedQuote
