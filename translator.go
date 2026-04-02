@@ -160,7 +160,7 @@ func expectedAfterQuote(ch byte) bool {
 }
 
 func seq(src []byte, i int, s string) bool {
-	if len(src) >= i+len(s) {
+	if i >= 0 && len(src) >= i+len(s) {
 		for j := 0; j < len(s); j++ {
 			if src[i+j] != s[j] {
 				return false
@@ -172,7 +172,7 @@ func seq(src []byte, i int, s string) bool {
 }
 
 func eq(src []byte, i int, ch byte) bool {
-	return len(src) >= i && src[i] == ch
+	return i >= 0 && i < len(src) && src[i] == ch
 }
 
 func firstNotSpace(src []byte, begin int) (byte, int) {

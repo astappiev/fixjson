@@ -2,9 +2,15 @@ package fixjson
 
 import (
 	"encoding/json"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEmpty(t *testing.T) {
@@ -132,6 +138,107 @@ func TestNewLines(t *testing.T) {
  "150 g Feta\n\t  "
 ]
   }`
+
+	actual := ToJSON([]byte(broken))
+	assert.True(t, json.Valid(actual))
+	assert.Equal(t, expect, string(actual))
+}
+
+func TestToJSONTrailingSlashDoesNotPanic(t *testing.T) {
+	assert.NotPanics(t, func() {
+		_ = ToJSON([]byte("{\"a\":1}/"))
+	})
+}
+
+func TestDescErrorOffsetOutOfRangeDoesNotPanic(t *testing.T) {
+	err := &json.SyntaxError{Offset: 1000}
+
+	assert.NotPanics(t, func() {
+		desc := descError(err, []byte("{\"a\":1}"), []byte("{"))
+		assert.Contains(t, desc.Error(), "invalid character at 1000")
+	})
+}
+
+const invalidSuffix = "-invalid.json"
+const fixedSuffix = "-fixed.json"
+
+func TestTestdata(t *testing.T) {
+	t.Parallel()
+
+	err := filepath.WalkDir("testdata", func(path string, d fs.DirEntry, err error) error {
+		require.NoError(t, err)
+
+		if !d.IsDir() && strings.HasSuffix(d.Name(), invalidSuffix) {
+			t.Run(d.Name(), func(t *testing.T) {
+				invalidJson, err := os.ReadFile(path)
+				require.NoError(t, err)
+
+				fixedPath := strings.Replace(path, invalidSuffix, fixedSuffix, 1)
+				expectedJson, err := os.ReadFile(fixedPath)
+				require.NoError(t, err)
+
+				actualJson := ToJSON(invalidJson)
+				assert.True(t, json.Valid(actualJson))
+
+				if !assert.JSONEq(t, string(expectedJson), string(actualJson)) {
+					assert.NoError(t, os.WriteFile(fixedPath+".new", actualJson, 0o644))
+				}
+			})
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+}
+
+func TestUnmarshalFixesBrokenJSON(t *testing.T) {
+	broken := []byte(`{
+		"name": "Cake"
+		"count": 2,
+	}`)
+
+	var out struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+
+	err := Unmarshal(broken, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, "Cake", out.Name)
+	assert.Equal(t, 2, out.Count)
+}
+
+func TestFallbackUnmarshalValidJSON(t *testing.T) {
+	valid := []byte(`{"ok":true,"n":1}`)
+
+	var out map[string]any
+	err := FallbackUnmarshal(valid, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, true, out["ok"])
+	assert.Equal(t, float64(1), out["n"])
+}
+
+func TestFallbackUnmarshalReturnsDescriptiveError(t *testing.T) {
+	invalid := []byte(`{"a": }`)
+
+	var out map[string]any
+	err := FallbackUnmarshal(invalid, &out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid character at")
+	assert.Contains(t, err.Error(), "<--(see the invalid character)")
+}
+
+func TestDescErrorUnmarshalTypeError(t *testing.T) {
+	err := &json.UnmarshalTypeError{Offset: 5, Value: "string", Type: reflect.TypeOf(0)}
+	desc := descError(err, []byte(`{"a":"x"}`), []byte(`{"a":"x"}`))
+
+	assert.Error(t, desc)
+	assert.Contains(t, desc.Error(), "invalid value at 5")
+	assert.Contains(t, desc.Error(), "<--(see the invalid type)")
+}
+
+func TestHashComments(t *testing.T) {
+	broken := "{\n# heading comment\n\"a\": 1,\n}"
+	expect := "{\n\n\"a\": 1\n}"
 
 	actual := ToJSON([]byte(broken))
 	assert.True(t, json.Valid(actual))

@@ -1,6 +1,6 @@
 # fixjson
 
-[![GoDoc](https://img.shields.io/badge/api-reference-blue.svg?style=flat-square)](https://pkg.go.dev/github.com/astappiev/fixjson) 
+[![Go Reference](https://pkg.go.dev/badge/github.com/astappiev/fixjson.svg)](https://pkg.go.dev/github.com/astappiev/fixjson)
 
 **fixjson** is a Go package that converts broken, nonstandard or nonofficial format (e.g. jsonc) to standard json.
 As an author of this package, I kindly ask you, stop doing that shit and use standard json whenever possible.
@@ -31,36 +31,54 @@ The features of the package are:
 }
 ```
 
-## Getting Started
-
-### Installing
+## Install
 
 ```sh
-$ go get -u github.com/astappiev/fixjson
+go get github.com/astappiev/fixjson@latest
 ```
 
-This will retrieve the library.
-
-### Example
-
-There's a provided function `fixjson.ToJSON`, which does the conversion.
+## Usage
 
 ```go
-data := `
-{
-  /* Example block
-   comment */
-  "propertyName": {
-    "name": "No, you can\'t do that in json",
-    "value": 5432, // counter   
-    "username": "josh"
-    "password": "pass123",
-  },
+package main
 
-  "title": "Hello
-    World",
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/astappiev/fixjson"
+)
+
+func main() {
+	raw := []byte(`{
+      /* Example block
+       comment */
+      "propertyName": {
+        "name": "No, you can\'t do that in json",
+        "value": 5432, // counter   
+        "username": "josh"
+        "password": "pass123",
+      },
+    
+      "title": "Hello
+        World",
+    }`)
+
+	var out map[string]any
+	if err := fixjson.Unmarshal(raw, &out); err != nil {
+		panic(err)
+	}
+
+	fmt.Println(out["title"])
+
+	// Or fix first, then unmarshal manually.
+	fixed := fixjson.ToJSON(raw)
+	_ = json.Unmarshal(fixed, &out)
 }
-`
-
-err := json.Unmarshal(fixjson.ToJSON(data), &config)
 ```
+
+## API
+
+- `ToJSON(src []byte) []byte`: translates input into valid JSON bytes
+- `Unmarshal(data []byte, v any) error`: fixes then unmarshals
+- `FallbackUnmarshal(data []byte, v any) error`: tries standard unmarshal first, then fix+unmarshal
