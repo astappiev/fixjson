@@ -8,15 +8,45 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
+
+// assertJSONEq checks that two JSON strings are semantically equal.
+// Returns true if equal, false otherwise (and logs an error).
+func assertJSONEq(t *testing.T, expected, actual string) bool {
+	t.Helper()
+	var e, a any
+	if err := json.Unmarshal([]byte(expected), &e); err != nil {
+		t.Errorf("failed to parse expected JSON: %v", err)
+		return false
+	}
+	if err := json.Unmarshal([]byte(actual), &a); err != nil {
+		t.Errorf("failed to parse actual JSON: %v", err)
+		return false
+	}
+	if !reflect.DeepEqual(e, a) {
+		t.Errorf("JSON not equal\nexpected: %s\nactual:   %s", expected, actual)
+		return false
+	}
+	return true
+}
+
+// assertNotPanics verifies that fn does not panic.
+func assertNotPanics(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("unexpected panic: %v", r)
+		}
+	}()
+	fn()
+}
 
 func TestEmpty(t *testing.T) {
 	broken := `{}`
 	actual := ToJSON([]byte(broken))
-	assert.Equal(t, broken, string(actual))
+	if broken != string(actual) {
+		t.Errorf("expected %q, got %q", broken, string(actual))
+	}
 }
 
 func TestComments(t *testing.T) {
@@ -29,15 +59,15 @@ func TestComments(t *testing.T) {
     "d\\\"\"e": [ 1, /* 2 */ 3, 4, ],
   }`
 
-	expect := `{  
-    "c": 3,"b":3, 
-    
-    "d\\\"\"e": [ 1,  3, 4 ]
-  }`
+	expect := "{  \n    \"c\": 3,\"b\":3, \n    \n    \"d\\\\\\\"\\\"e\": [ 1,  3, 4 ]\n  }"
 
 	actual := ToJSON([]byte(broken))
-	assert.True(t, json.Valid(actual))
-	assert.Equal(t, expect, string(actual))
+	if !json.Valid(actual) {
+		t.Error("result is not valid JSON")
+	}
+	if expect != string(actual) {
+		t.Errorf("expected %q, got %q", expect, string(actual))
+	}
 }
 
 func TestTrailingCommas(t *testing.T) {
@@ -53,8 +83,12 @@ func TestTrailingCommas(t *testing.T) {
 	}`
 
 	actual := ToJSON([]byte(broken))
-	assert.True(t, json.Valid(actual))
-	assert.Equal(t, expect, string(actual))
+	if !json.Valid(actual) {
+		t.Error("result is not valid JSON")
+	}
+	if expect != string(actual) {
+		t.Errorf("expected %q, got %q", expect, string(actual))
+	}
 }
 
 func TestMissingCommas(t *testing.T) {
@@ -70,8 +104,12 @@ func TestMissingCommas(t *testing.T) {
 	}`
 
 	actual := ToJSON([]byte(broken))
-	assert.True(t, json.Valid(actual))
-	assert.Equal(t, expect, string(actual))
+	if !json.Valid(actual) {
+		t.Error("result is not valid JSON")
+	}
+	if expect != string(actual) {
+		t.Errorf("expected %q, got %q", expect, string(actual))
+	}
 }
 
 func TestInvalidEscapeChar(t *testing.T) {
@@ -83,8 +121,12 @@ func TestInvalidEscapeChar(t *testing.T) {
   }`
 
 	actual := ToJSON([]byte(broken))
-	assert.True(t, json.Valid(actual))
-	assert.Equal(t, expect, string(actual))
+	if !json.Valid(actual) {
+		t.Error("result is not valid JSON")
+	}
+	if expect != string(actual) {
+		t.Errorf("expected %q, got %q", expect, string(actual))
+	}
 }
 
 func TestMissingEscaping(t *testing.T) {
@@ -102,8 +144,12 @@ func TestMissingEscaping(t *testing.T) {
 }`
 
 	actual := ToJSON([]byte(broken))
-	assert.True(t, json.Valid(actual))
-	assert.Equal(t, expect, string(actual))
+	if !json.Valid(actual) {
+		t.Error("result is not valid JSON")
+	}
+	if expect != string(actual) {
+		t.Errorf("expected %q, got %q", expect, string(actual))
+	}
 }
 
 func TestEscaped(t *testing.T) {
@@ -115,8 +161,12 @@ func TestEscaped(t *testing.T) {
   }`
 
 	actual := ToJSON([]byte(broken))
-	assert.True(t, json.Valid(actual))
-	assert.Equal(t, expect, string(actual))
+	if !json.Valid(actual) {
+		t.Error("result is not valid JSON")
+	}
+	if expect != string(actual) {
+		t.Errorf("expected %q, got %q", expect, string(actual))
+	}
 }
 
 func TestNewLines(t *testing.T) {
@@ -130,22 +180,19 @@ func TestNewLines(t *testing.T) {
       ", "150 g Feta
 	  "],
   }`
-	expect := `{
-    "recipeCuisine": "European\n\t\tcuisine",
-
-    
-    "recipeIngredient": ["200 g Beets (baked or boiled)\n      ",
- "150 g Feta\n\t  "
-]
-  }`
+	expect := "{\n    \"recipeCuisine\": \"European\\n\\t\\tcuisine\",\n\n    \n    \"recipeIngredient\": [\"200 g Beets (baked or boiled)\\n      \",\n \"150 g Feta\\n\\t  \"\n]\n  }"
 
 	actual := ToJSON([]byte(broken))
-	assert.True(t, json.Valid(actual))
-	assert.Equal(t, expect, string(actual))
+	if !json.Valid(actual) {
+		t.Error("result is not valid JSON")
+	}
+	if expect != string(actual) {
+		t.Errorf("expected %q, got %q", expect, string(actual))
+	}
 }
 
 func TestToJSONTrailingSlashDoesNotPanic(t *testing.T) {
-	assert.NotPanics(t, func() {
+	assertNotPanics(t, func() {
 		_ = ToJSON([]byte("{\"a\":1}/"))
 	})
 }
@@ -153,9 +200,11 @@ func TestToJSONTrailingSlashDoesNotPanic(t *testing.T) {
 func TestDescErrorOffsetOutOfRangeDoesNotPanic(t *testing.T) {
 	err := &json.SyntaxError{Offset: 1000}
 
-	assert.NotPanics(t, func() {
+	assertNotPanics(t, func() {
 		desc := descError(err, []byte("{\"a\":1}"), []byte("{"))
-		assert.Contains(t, desc.Error(), "invalid character at 1000")
+		if !strings.Contains(desc.Error(), "invalid character at 1000") {
+			t.Errorf("expected error to contain %q, got %q", "invalid character at 1000", desc.Error())
+		}
 	})
 }
 
@@ -166,28 +215,38 @@ func TestTestdata(t *testing.T) {
 	t.Parallel()
 
 	err := filepath.WalkDir("testdata", func(path string, d fs.DirEntry, err error) error {
-		require.NoError(t, err)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		if !d.IsDir() && strings.HasSuffix(d.Name(), invalidSuffix) {
 			t.Run(d.Name(), func(t *testing.T) {
 				invalidJson, err := os.ReadFile(path)
-				require.NoError(t, err)
+				if err != nil {
+					t.Fatal(err)
+				}
 
 				fixedPath := strings.Replace(path, invalidSuffix, fixedSuffix, 1)
 				expectedJson, err := os.ReadFile(fixedPath)
-				require.NoError(t, err)
+				if err != nil {
+					t.Fatal(err)
+				}
 
 				actualJson := ToJSON(invalidJson)
-				assert.True(t, json.Valid(actualJson))
+				if !json.Valid(actualJson) {
+					t.Error("result is not valid JSON")
+				}
 
-				if !assert.JSONEq(t, string(expectedJson), string(actualJson)) {
-					assert.NoError(t, os.WriteFile(fixedPath+".new", actualJson, 0o644))
+				if !assertJSONEq(t, string(expectedJson), string(actualJson)) {
+					_ = os.WriteFile(fixedPath+".new", actualJson, 0o644)
 				}
 			})
 		}
 		return nil
 	})
-	assert.NoError(t, err)
+	if err != nil {
+		t.Errorf("WalkDir error: %v", err)
+	}
 }
 
 func TestUnmarshalFixesBrokenJSON(t *testing.T) {
@@ -202,9 +261,15 @@ func TestUnmarshalFixesBrokenJSON(t *testing.T) {
 	}
 
 	err := Unmarshal(broken, &out)
-	assert.NoError(t, err)
-	assert.Equal(t, "Cake", out.Name)
-	assert.Equal(t, 2, out.Count)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if out.Name != "Cake" {
+		t.Errorf("expected Name %q, got %q", "Cake", out.Name)
+	}
+	if out.Count != 2 {
+		t.Errorf("expected Count %d, got %d", 2, out.Count)
+	}
 }
 
 func TestFallbackUnmarshalValidJSON(t *testing.T) {
@@ -212,9 +277,15 @@ func TestFallbackUnmarshalValidJSON(t *testing.T) {
 
 	var out map[string]any
 	err := FallbackUnmarshal(valid, &out)
-	assert.NoError(t, err)
-	assert.Equal(t, true, out["ok"])
-	assert.Equal(t, float64(1), out["n"])
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if out["ok"] != true {
+		t.Errorf("expected out[\"ok\"] = true, got %v", out["ok"])
+	}
+	if out["n"] != float64(1) {
+		t.Errorf("expected out[\"n\"] = 1.0, got %v", out["n"])
+	}
 }
 
 func TestFallbackUnmarshalReturnsDescriptiveError(t *testing.T) {
@@ -222,18 +293,30 @@ func TestFallbackUnmarshalReturnsDescriptiveError(t *testing.T) {
 
 	var out map[string]any
 	err := FallbackUnmarshal(invalid, &out)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid character at")
-	assert.Contains(t, err.Error(), "<--(see the invalid character)")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid character at") {
+		t.Errorf("expected error to contain %q, got %q", "invalid character at", err.Error())
+	}
+	if !strings.Contains(err.Error(), "<--(see the invalid character)") {
+		t.Errorf("expected error to contain %q, got %q", "<--(see the invalid character)", err.Error())
+	}
 }
 
 func TestDescErrorUnmarshalTypeError(t *testing.T) {
 	err := &json.UnmarshalTypeError{Offset: 5, Value: "string", Type: reflect.TypeOf(0)}
 	desc := descError(err, []byte(`{"a":"x"}`), []byte(`{"a":"x"}`))
 
-	assert.Error(t, desc)
-	assert.Contains(t, desc.Error(), "invalid value at 5")
-	assert.Contains(t, desc.Error(), "<--(see the invalid type)")
+	if desc == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(desc.Error(), "invalid value at 5") {
+		t.Errorf("expected error to contain %q, got %q", "invalid value at 5", desc.Error())
+	}
+	if !strings.Contains(desc.Error(), "<--(see the invalid type)") {
+		t.Errorf("expected error to contain %q, got %q", "<--(see the invalid type)", desc.Error())
+	}
 }
 
 func TestHashComments(t *testing.T) {
@@ -241,6 +324,10 @@ func TestHashComments(t *testing.T) {
 	expect := "{\n\n\"a\": 1\n}"
 
 	actual := ToJSON([]byte(broken))
-	assert.True(t, json.Valid(actual))
-	assert.Equal(t, expect, string(actual))
+	if !json.Valid(actual) {
+		t.Error("result is not valid JSON")
+	}
+	if expect != string(actual) {
+		t.Errorf("expected %q, got %q", expect, string(actual))
+	}
 }
