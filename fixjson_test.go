@@ -197,11 +197,11 @@ func TestToJSONTrailingSlashDoesNotPanic(t *testing.T) {
 	})
 }
 
-func TestDescErrorOffsetOutOfRangeDoesNotPanic(t *testing.T) {
+func TestDescribeErrorOffsetOutOfRangeDoesNotPanic(t *testing.T) {
 	err := &json.SyntaxError{Offset: 1000}
 
 	assertNotPanics(t, func() {
-		desc := descError(err, []byte("{\"a\":1}"), []byte("{"))
+		desc := describeError(err, []byte("{\"a\":1}"))
 		if !strings.Contains(desc.Error(), "invalid character at 1000") {
 			t.Errorf("expected error to contain %q, got %q", "invalid character at 1000", desc.Error())
 		}
@@ -221,6 +221,7 @@ func TestTestdata(t *testing.T) {
 
 		if !d.IsDir() && strings.HasSuffix(d.Name(), invalidSuffix) {
 			t.Run(d.Name(), func(t *testing.T) {
+				t.Parallel()
 				invalidJson, err := os.ReadFile(path)
 				if err != nil {
 					t.Fatal(err)
@@ -239,6 +240,7 @@ func TestTestdata(t *testing.T) {
 
 				if !assertJSONEq(t, string(expectedJson), string(actualJson)) {
 					_ = os.WriteFile(fixedPath+".new", actualJson, 0o644)
+					t.Logf("wrote mismatch to %s", fixedPath+".new")
 				}
 			})
 		}
@@ -304,9 +306,9 @@ func TestFallbackUnmarshalReturnsDescriptiveError(t *testing.T) {
 	}
 }
 
-func TestDescErrorUnmarshalTypeError(t *testing.T) {
+func TestDescribeErrorUnmarshalTypeError(t *testing.T) {
 	err := &json.UnmarshalTypeError{Offset: 5, Value: "string", Type: reflect.TypeOf(0)}
-	desc := descError(err, []byte(`{"a":"x"}`), []byte(`{"a":"x"}`))
+	desc := describeError(err, []byte(`{"a":"x"}`))
 
 	if desc == nil {
 		t.Fatal("expected an error, got nil")
@@ -330,4 +332,68 @@ func TestHashComments(t *testing.T) {
 	if expect != string(actual) {
 		t.Errorf("expected %q, got %q", expect, string(actual))
 	}
+}
+
+func TestTrailingCommaBeforeComment(t *testing.T) {
+	in := `{"a":1, /*x*/ }`
+	out := ToJSON([]byte(in))
+	if !json.Valid(out) {
+		t.Errorf("expected valid JSON, got: %s", out)
+	}
+	in2 := `{"a":1, // x` + "\n" + `}`
+	out2 := ToJSON([]byte(in2))
+	if !json.Valid(out2) {
+		t.Errorf("expected valid JSON, got: %s", out2)
+	}
+}
+
+func TestMissingCommaAcrossComment(t *testing.T) {
+	in := `{"a": "1" // x` + "\n" + `"b": "2"}`
+	out := ToJSON([]byte(in))
+	if !json.Valid(out) {
+		t.Errorf("expected valid JSON, got: %s", out)
+	}
+}
+
+func TestOddEmbeddedQuotes(t *testing.T) {
+	in := `{"x": "a"b"}`
+	out := ToJSON([]byte(in))
+	if !json.Valid(out) {
+		t.Errorf("expected valid JSON, got: %s", out)
+	}
+}
+
+func TestEscapedQuoteStateLeak(t *testing.T) {
+	in := `{"a": 1, "b": "x &quot; y"}`
+	out := ToJSON([]byte(in))
+	if !json.Valid(out) {
+		t.Errorf("expected valid JSON, got: %s", out)
+	}
+}
+
+func TestRepairTruncated(t *testing.T) {
+	in := `{"a": "hello`
+	out := ToJSON([]byte(in))
+	if !json.Valid(out) {
+		t.Errorf("expected valid JSON, got: %s", out)
+	}
+	// Also test arrays and objects
+	in2 := `[{"a": "hello"`
+	out2 := ToJSON([]byte(in2))
+	if !json.Valid(out2) {
+		t.Errorf("expected valid JSON, got: %s", out2)
+	}
+}
+
+func FuzzToJSON(f *testing.F) {
+	f.Add([]byte(`{"a":1,}`))
+	f.Add([]byte(`{"a": "1" // x` + "\n" + `"b": "2"}`))
+	f.Add([]byte(`{"x": "a"b"}`))
+	f.Add([]byte(`{"a": "hello`))
+	f.Fuzz(func(t *testing.T, src []byte) {
+		_ = ToJSON(src) // must not panic
+		if json.Valid(src) && !json.Valid(ToJSON(src)) {
+			t.Errorf("valid input broken: %q -> %q", src, ToJSON(src))
+		}
+	})
 }

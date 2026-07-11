@@ -1,71 +1,65 @@
+// Package fixjson translates broken or non-standard JSON in src into valid JSON.
+// The input is not modified; a new byte slice is returned.
 package fixjson
 
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 )
 
-// ToJSON fixes the input to a valid JSON
+// ToJSON translates broken or non-standard JSON in src into valid JSON.
+// The input is not modified; a new byte slice is returned.
 func ToJSON(src []byte) []byte {
 	return translate(src)
 }
 
-// Unmarshal tries to fix the JSON and then unmarshal it
+// Unmarshal tries to fix the JSON first, and if that succeeds but unmarshaling
+// the fixed form fails, it falls back to the original raw input.
 func Unmarshal(data []byte, v any) error {
-	return fixAndUnmarshal(data, v, true)
-}
-
-// FallbackUnmarshal tries to unmarshal the data as valid JSON, if that fails, it tries to fix it and unmarshal fixed
-func FallbackUnmarshal(data []byte, v any) error {
-	if err := json.Unmarshal(data, v); err != nil {
-		return fixAndUnmarshal(data, v, false)
-	}
-	return nil
-}
-
-func fixAndUnmarshal(data []byte, v any, fallback bool) error {
 	fixedData := ToJSON(data)
 
 	if err := json.Unmarshal(fixedData, v); err != nil {
-		// we failed to fix the json, we can't predict everything
-		if fallback {
-			if err := json.Unmarshal(data, v); err != nil {
-				return descError(err, data, fixedData)
-			}
-
-			// wow, the json was valid, but while fixing it, we broke it!
-			log.Println("fixjson got valid JSON that was broken during transform.")
-			log.Println("We have managed to catch that, but you may create an issues about that: https://github.com/astappiev/fixjson/issues")
-			log.Printf("Input size: %d bytes", len(data))
-		} else {
-			return descError(err, data, fixedData)
+		if err := json.Unmarshal(data, v); err != nil {
+			return describeError(err, data)
 		}
 	}
 	return nil
 }
 
-func descError(err error, data []byte, fixed []byte) error {
-	clip := func(offset int64, src []byte) string {
+// FallbackUnmarshal tries to unmarshal the data as valid JSON first.
+// If that fails, it falls back to fixing it and unmarshaling the fixed JSON.
+func FallbackUnmarshal(data []byte, v any) error {
+	if err := json.Unmarshal(data, v); err != nil {
+		fixedData := ToJSON(data)
+		if err := json.Unmarshal(fixedData, v); err != nil {
+			return describeError(err, fixedData)
+		}
+	}
+	return nil
+}
+
+func describeError(err error, src []byte) error {
+	clip := func(offset int64) string {
 		if offset <= 0 {
 			return ""
 		}
-		i := int(offset)
-		if i > len(src) {
-			i = len(src)
+		i := min(int(offset), len(src))
+		start := i - 40
+		if start < 0 {
+			start = 0
 		}
-		return string(src[:i])
+		return string(src[start:i])
 	}
 
 	switch t := err.(type) {
 	case *json.SyntaxError:
-		jsn := clip(t.Offset, data) + " [" + clip(t.Offset, fixed) + "]"
+		jsn := clip(t.Offset)
 		jsn += "<--(see the invalid character)"
-		return fmt.Errorf("invalid character at %v\n %s", t.Offset, jsn)
+		return fmt.Errorf("invalid character at %v\n %s: %w", t.Offset, jsn, err)
 	case *json.UnmarshalTypeError:
-		jsn := clip(t.Offset, data) + " [" + clip(t.Offset, fixed) + "]"
+		jsn := clip(t.Offset)
 		jsn += "<--(see the invalid type)"
-		return fmt.Errorf("invalid value at %v\n %s", t.Offset, jsn)
+		return fmt.Errorf("invalid value at %v\n %s: %w", t.Offset, jsn, err)
 	default:
 		return err
 	}
