@@ -4,6 +4,7 @@ package fixjson
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -13,29 +14,45 @@ func ToJSON(src []byte) []byte {
 	return translate(src)
 }
 
-// Unmarshal tries to fix the JSON first, and if that succeeds but unmarshaling
-// the fixed form fails, it falls back to the original raw input.
+// Unmarshal fixes the JSON first and unmarshals the fixed form.
+// If the fixed form is not valid JSON but the original raw input is, it unmarshals the raw input instead.
+// A returned error describes the form that was unmarshaled.
 func Unmarshal(data []byte, v any) error {
 	fixedData := ToJSON(data)
 
 	if err := json.Unmarshal(fixedData, v); err != nil {
-		if err := json.Unmarshal(data, v); err != nil {
-			return describeError(err, data)
+		if isSyntaxError(err) && json.Valid(data) { // v is untouched, syntax is checked before decoding
+			if err := json.Unmarshal(data, v); err != nil {
+				return describeError(err, data)
+			}
+			return nil
 		}
+		return describeError(err, fixedData)
 	}
 	return nil
 }
 
 // FallbackUnmarshal tries to unmarshal the data as valid JSON first.
-// If that fails, it falls back to fixing it and unmarshaling the fixed JSON.
+// If the data is not valid JSON, it falls back to fixing it and unmarshaling the fixed JSON.
 func FallbackUnmarshal(data []byte, v any) error {
-	if err := json.Unmarshal(data, v); err != nil {
-		fixedData := ToJSON(data)
-		if err := json.Unmarshal(fixedData, v); err != nil {
-			return describeError(err, fixedData)
-		}
+	err := json.Unmarshal(data, v)
+	if err == nil {
+		return nil
+	}
+	if !isSyntaxError(err) { // fixing cannot help, e.g. with a type mismatch
+		return describeError(err, data)
+	}
+
+	fixedData := ToJSON(data)
+	if err := json.Unmarshal(fixedData, v); err != nil {
+		return describeError(err, fixedData)
 	}
 	return nil
+}
+
+func isSyntaxError(err error) bool {
+	var syntaxErr *json.SyntaxError
+	return errors.As(err, &syntaxErr)
 }
 
 func describeError(err error, src []byte) error {
@@ -44,11 +61,7 @@ func describeError(err error, src []byte) error {
 			return ""
 		}
 		i := min(int(offset), len(src))
-		start := i - 40
-		if start < 0 {
-			start = 0
-		}
-		return string(src[start:i])
+		return string(src[max(i-40, 0):i])
 	}
 
 	switch t := err.(type) {

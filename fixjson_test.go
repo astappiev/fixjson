@@ -2,6 +2,7 @@ package fixjson
 
 import (
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -382,6 +383,156 @@ func TestRepairTruncated(t *testing.T) {
 	out2 := ToJSON([]byte(in2))
 	if !json.Valid(out2) {
 		t.Errorf("expected valid JSON, got: %s", out2)
+	}
+}
+
+// assertFixes checks that ToJSON turns each input into the expected JSON.
+func assertFixes(t *testing.T, cases map[string]string) {
+	t.Helper()
+	for in, expect := range cases {
+		t.Run(in, func(t *testing.T) {
+			assertJSONEq(t, expect, string(ToJSON([]byte(in))))
+		})
+	}
+}
+
+func TestReadmeExample(t *testing.T) {
+	raw := []byte(`{
+  /* Example block
+   comment */
+  "propertyName": {
+    "name": "No, you can\'t do that in json",
+    "value": 5432, // counter
+    "username": "josh"
+    "password": "pass123",
+  },
+
+  "title": "Hello
+    World",
+}`)
+
+	var out map[string]any
+	if err := Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out["title"] != "Hello\n    World" {
+		t.Errorf("unexpected title %q", out["title"])
+	}
+}
+
+func TestNewLineBeforeTrailingComma(t *testing.T) {
+	cases := map[string]string{
+		"{\"a\": \"x\ny\",\n}": `{"a": "x\ny"}`,
+		"[\"a\nb\",]":          `["a\nb"]`,
+		"[\"a\nb\",":           `["a\nb"]`,
+	}
+	assertFixes(t, cases)
+}
+
+func TestCommentLikeTextInString(t *testing.T) {
+	cases := map[string]string{
+		`{"html": "<img src="//cdn.x.com/a.png">", "b": 1}`:  `{"html": "<img src=\"//cdn.x.com/a.png\">", "b": 1}`,
+		"{\"t\": \"Issue \"#42\" fixed\",\n\"b\":1}":         `{"t": "Issue \"#42\" fixed", "b": 1}`,
+		"{\n \"html\": \"<a href=\"//cdn.com/x\">x</a>\"\n}": `{"html": "<a href=\"//cdn.com/x\">x</a>"}`,
+		"{\n \"t\": \"fixed in \"#42\"\n}":                   `{"t": "fixed in \"#42"}`,
+		"[\n \"a \"//b\" c\",\n \"d\"\n]":                    `["a \"//b\" c", "d"]`,
+	}
+	assertFixes(t, cases)
+}
+
+func TestCommentAfterClosingQuote(t *testing.T) {
+	cases := map[string]string{
+		"{\"a\":\"x\"// c\n,\"b\":1}": `{"a":"x","b":1}`,
+		"{\"a\":\"x\"// c\n}":         `{"a":"x"}`,
+		"[\"x\"//c\n]":                `["x"]`,
+		"[\"x\"# c\n]":                `["x"]`,
+		`{"a":"x"/* c */,"b":1}`:      `{"a":"x","b":1}`,
+		`{"a"/*c*/:1}`:                `{"a":1}`,
+		`["a"/*c*/"b"]`:               `["a","b"]`,
+		`{"a":"x"// c`:                `{"a":"x"}`,
+		"[\"a\"//first\n\"b\"]":       `["a","b"]`,
+		"{\"a\":\"x\"#note\n\"b\":1}": `{"a":"x","b":1}`,
+		`["x"//c`:                     `["x"]`,
+	}
+	assertFixes(t, cases)
+}
+
+func TestCommaAfterQuoteWithoutClosingQuote(t *testing.T) {
+	// the quote must not be escaped, that would pull the rest of the input into the string literal
+	for _, in := range []string{`{"a":"x",b:1}`, `["a",NaN]`, `{"a":["x",1x]}`, `{"a":"x",b:1,"c":2}`} {
+		var out any
+		if err := Unmarshal([]byte(in), &out); err == nil {
+			t.Errorf("%s: expected an error, got %v", in, out)
+		}
+	}
+}
+
+func TestQuoteFollowedByCommaInText(t *testing.T) {
+	cases := map[string]string{
+		`{"a": "he said "yes", then left"}`: `{"a": "he said \"yes\", then left"}`,
+		`{"a": "x "y", "b": "z"}`:           `{"a": "x \"y", "b": "z"}`,
+		`{"a": "x", "b": [1, true, null]}`:  `{"a": "x", "b": [1, true, null]}`,
+	}
+	assertFixes(t, cases)
+}
+
+func TestEscapedControlCharacters(t *testing.T) {
+	cases := map[string]string{
+		"{\"a\": \"x\\\ty\", \"b\": \"x\\\ny\"}": `{"a": "x\ty", "b": "x\ny"}`,
+	}
+	assertFixes(t, cases)
+}
+
+func TestRepairTruncatedAtBoundaries(t *testing.T) {
+	cases := map[string]string{
+		`{"a":1,`:       `{"a":1}`,
+		`[1,`:           `[1]`,
+		`{"a":1, // x`:  `{"a":1}`,
+		`{"a":"x\`:      `{"a":"x"}`,
+		`{"a`:           `{"a":null}`,
+		`{"a":`:         `{"a":null}`,
+		`{"a" `:         `{"a":null}`,
+		`{"a":{"b"`:     `{"a":{"b":null}}`,
+		`{"a":"x"`:      `{"a":"x"}`,
+		`["a"`:          `["a"]`,
+		`{"a":"q\"x"`:   `{"a":"q\"x"}`,
+		`{"a":[1,{"b":`: `{"a":[1,{"b":null}]}`,
+		`{"a":"x\u00`:   `{"a":"x"}`,
+		`["a\u`:         `["a"]`,
+		`["a\\u00`:      `["a\\u00"]`,
+		`["\u00e9`:      `["\u00e9"]`,
+		`{"a":tr`:       `{"a":true}`,
+		`{"a":nul `:     `{"a":null}`,
+		`[1,f`:          `[1,false]`,
+		`{"a":1.`:       `{"a":1}`,
+		`{"a":1.5e-`:    `{"a":1.5}`,
+		`{"a":-`:        `{"a":null}`,
+		`[1,-`:          `[1]`,
+		`{"a":"x",tr`:   `{"a":"x"}`,
+		`{tr`:           `{}`,
+	}
+	assertFixes(t, cases)
+}
+
+func TestTypeErrorIsReported(t *testing.T) {
+	cases := map[string]struct {
+		unmarshal func([]byte, any) error
+		in        string
+	}{
+		"Unmarshal":         {Unmarshal, `{"count": "2",}`},
+		"FallbackUnmarshal": {FallbackUnmarshal, `{"count": "2"}`}, // fixing is skipped
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			var out struct {
+				Count int `json:"count"`
+			}
+			err := c.unmarshal([]byte(c.in), &out)
+			var typeErr *json.UnmarshalTypeError
+			if !errors.As(err, &typeErr) {
+				t.Errorf("expected an UnmarshalTypeError, got %v", err)
+			}
+		})
 	}
 }
 

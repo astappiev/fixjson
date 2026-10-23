@@ -80,5 +80,5 @@ func main() {
 ## API
 
 - `ToJSON(src []byte) []byte`: translates input into valid JSON bytes
-- `Unmarshal(data []byte, v any) error`: fixes then unmarshals
-- `FallbackUnmarshal(data []byte, v any) error`: tries standard unmarshal first, then fix+unmarshal
+- `Unmarshal(data []byte, v any) error`: fixes then unmarshals; if the fixed form is invalid but the raw input is valid JSON, unmarshals the raw input instead
+- `FallbackUnmarshal(data []byte, v any) error`: tries standard unmarshal first, then fix+unmarshal only on a syntax error; other errors, such as a type mismatch, are returned without fixing
